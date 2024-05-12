@@ -25,7 +25,7 @@
   <depend>mola_input_mulran_dataset</depend>
   <depend>mola_input_rawlog</depend>
   <depend>mola_input_rosbag2</depend>
-  <depend>mola_input_paris_luco</depend>
+  <depend>mola_input_paris_luco_dataset</depend>
   
   <depend>tbb</depend>
   <depend>eigen</depend>

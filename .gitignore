@@ -36,3 +36,5 @@
 build
 results
 .vscode/*
+CMakeLists.txt.user
+build*
