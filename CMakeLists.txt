@@ -118,7 +118,7 @@ mola_add_executable(
 		nanoflann::nanoflann
 		dlib::dlib
 		TBB::tbb
-		#yaml-cpp::yaml-cpp
+		${YAML_CPP_LIBRARIES}
 )
 target_include_directories(mola-lidar-odometry-cli-simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/src)
 

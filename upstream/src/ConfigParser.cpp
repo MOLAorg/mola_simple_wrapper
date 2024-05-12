@@ -1,6 +1,6 @@
 #include "ConfigParser.hpp"
 
-ConfigParser::ConfigParser(int argc, char** yamlFilePath)
+ConfigParser::ConfigParser(int argc, const char **yamlFilePath)
 {
     if (argc != 2)
     {

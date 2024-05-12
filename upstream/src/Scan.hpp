@@ -1,13 +1,14 @@
 #pragma once
+// clang-format off
 
 #ifndef SCAN_H
 #define SCAN_H
 
 #include <eigen3/Eigen/Dense>
-#include <fstream>
 #include <nanoflann.hpp>
 #include <set>
 #include <tbb/parallel_for.h>
+#include <mrpt/maps/CPointsMap.h>
 
 #include "ConfigParser.hpp"
 #include "utils.hpp"
@@ -44,6 +45,8 @@ class Scan
          * @param fileName Name of the file to read.
          */
         void readScan(std::string fileName);
+        
+        void readScan(const mrpt::maps::CPointsMap &pts);
 
     protected:
         // Point cloud subsample radius.

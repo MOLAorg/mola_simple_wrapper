@@ -17,7 +17,7 @@ class ConfigParser
          * @param argc          Number of commandline arguments.
          * @param yamlFilePath  Commandline arguments.
          */
-        ConfigParser(int argc, char** yamlFilePath);
+        ConfigParser(int argc, const char** yamlFilePath);
 
         /**
          * @brief Destroy the Config Parser object.

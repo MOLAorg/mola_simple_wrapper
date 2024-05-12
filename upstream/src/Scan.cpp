@@ -1,4 +1,6 @@
+// clang-format off
 #include "Scan.hpp"
+#include <fstream>
 
 Scan::Scan(ConfigParser &config)
 {
@@ -40,6 +42,43 @@ void Scan::readScan(std::string fileName)
             ptCloud.push_back({ptsFromFile[i],
                                ptsFromFile[i+1],
                                ptsFromFile[i+2],
+                               1});
+            
+            // Save the pt index for subsampling.
+            allPoints_.insert(counter); 
+            counter++;
+        }
+    }
+
+    // Process the scan.
+    processPointCloud_();
+}
+
+
+void Scan::readScan(const mrpt::maps::CPointsMap &pts)
+{
+    ptCloud.clear();
+    allPoints_.clear();
+
+    unsigned int numPts = pts.size();
+    
+    const auto &xs = pts.getPointsBufferRef_x();
+    const auto &ys = pts.getPointsBufferRef_y();
+    const auto &zs = pts.getPointsBufferRef_z();
+    int counter = 0;
+
+    for (unsigned int i = 0; i < numPts; i++)
+    {
+        // Save the pt if it is within the maximum and mininmum sensor ranges.
+        double normSquared = pow(xs[i], 2) + 
+                             pow(ys[i], 2) + 
+                             pow(zs[i], 2); 
+        if ((normSquared > pow(minSensorRange_, 2)) &&
+            (normSquared < pow(maxSensorRange_, 2)))
+        {
+            ptCloud.push_back({xs[i],
+                               ys[i],
+                               zs[i],
                                1});
             
             // Save the pt index for subsampling.

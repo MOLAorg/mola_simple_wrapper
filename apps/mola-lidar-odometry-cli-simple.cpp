@@ -85,13 +85,10 @@
 // Declare supported cli switches ===========
 static TCLAP::CmdLine cmd("mola-lidar-odometry-cli-kiss");
 
-static TCLAP::ValueArg<double> argMinRange("", "min-range",
-                                           "min-range parameter", false, 5.0,
-                                           "min-range", cmd);
-
-static TCLAP::ValueArg<double> argMaxRange("", "max-range",
-                                           "max-range parameter", false, 100.0,
-                                           "max-range", cmd);
+static TCLAP::ValueArg<std::string> argSimpleConfigYaml("-c", "config-file",
+                                                        "Simple config file",
+                                                        true, "config.yaml",
+                                                        "config.yaml", cmd);
 
 static TCLAP::ValueArg<std::string> arg_outPath(
     "", "output-tum-path",
@@ -325,7 +322,8 @@ static int main_odometry() {
   // ------------------------------------------------------------------------
   // ARGUMENT PARSING
   // ------------------------------------------------------------------------
-  ConfigParser config(argc, argv);
+  const char *argv[3] = {"me", argSimpleConfigYaml.getValue().c_str(), nullptr};
+  ConfigParser config(2 /*argc*/, argv);
   int configStatus = config.parseConfig();
   if (configStatus)
     exit(1);
@@ -333,88 +331,14 @@ static int main_odometry() {
   // ------------------------------------------------------------------------
   // LOAD THE SCAN PATHS
   // ------------------------------------------------------------------------
-  std::vector<std::string> scanFiles;
-  for (auto const &dir_entry :
-       std::filesystem::directory_iterator(config.scanPath))
-    scanFiles.push_back(dir_entry.path());
-
-  // Sort the scans in order of the file name.
-  std::sort(scanFiles.begin(), scanFiles.end(), compareStrings);
-
-  // Number of scans.
-  unsigned int numScans = scanFiles.size();
-
-  // ------------------------------------------------------------------------
-  // DETERMINE POINT CLOUD REGISTRATION RESULTS
-  // ------------------------------------------------------------------------
-  // Store the pose estimates in (roll,pitch,yaw,x,y,z,registrationScore)
-  // format.
-  std::vector<std::vector<double>> poseEstimates(numScans,
-                                                 std::vector<double>(7));
-
-  // Start the timer.
-  auto startReg = std::chrono::high_resolution_clock::now();
+  // Not applicable to MOLA wrapper
+  // std::vector<std::string> scanFiles;
+  // unsigned int numScans = scanFiles.size();
 
   // Container for a new scan.
   Scan newScan(config);
   Map subMap(config);
   Register scanToMapRegister(config);
-
-  // Loop over all input scans, update the submap, and save the registration
-  // result.
-  for (unsigned int scanNum = 0; scanNum < numScans; scanNum++) {
-    // Step 1: Read the scan and subsample the scan at rNew.
-    newScan.readScan(scanFiles[scanNum]);
-
-    // --------------------------------------------------------------------
-    // STEP 2: INPUT POINT CLOUD TO LOCAL MAP REGISTRATION
-    // --------------------------------------------------------------------
-    if (scanNum > 0) {
-      scanToMapRegister.registerScan(newScan.ptCloud, subMap.pcForKdTree_);
-
-      // Save the results.
-      poseEstimates[scanNum] = {
-          scanToMapRegister.regResult(0),     scanToMapRegister.regResult(1),
-          scanToMapRegister.regResult(2),     scanToMapRegister.regResult(3),
-          scanToMapRegister.regResult(4),     scanToMapRegister.regResult(5),
-          scanToMapRegister.registrationScore};
-    }
-
-    // --------------------------------------------------------------------
-    // STEP 3: UPDATE THE LOCAL MAP
-    // --------------------------------------------------------------------
-    // Transform the current scan to the current pose estimate.
-    Eigen::Matrix4d hypothesis =
-        homogeneous(poseEstimates[scanNum][0], poseEstimates[scanNum][1],
-                    poseEstimates[scanNum][2], poseEstimates[scanNum][3],
-                    poseEstimates[scanNum][4], poseEstimates[scanNum][5]);
-
-    subMap.updateMap(newScan.ptCloud, hypothesis);
-
-    // Print the progress to the terminal.
-    // Comment printProgress to remove this.
-    printProgress((double(scanNum) / numScans));
-  }
-  // End with a new line character for the progress bar.
-  printf("\n");
-
-  // Calculate the average time per registration result.
-  auto stopReg = std::chrono::high_resolution_clock::now();
-  auto durationReg =
-      std::chrono::duration_cast<std::chrono::milliseconds>(stopReg - startReg);
-  double avgTimePerScan = durationReg.count() / numScans;
-
-  // ------------------------------------------------------------------------
-  // OUTPUT RESULTS
-  // ------------------------------------------------------------------------
-  if (config.verbose)
-    std::cout << "avgTimePerScan [ms] = " << avgTimePerScan << ";" << std::endl;
-
-  // Output a file with the results in the KITTI format, and a file with the
-  // configuration parameters.
-  writeResults(config, poseEstimates, config.outputFileName, avgTimePerScan);
-
-  // ----
 
   // Select dataset input:
   std::shared_ptr<mola::OfflineDatasetSource> dataset;
@@ -462,9 +386,20 @@ static int main_odometry() {
   if (arg_firstN.isSet())
     nDatasetEntriesToRun = arg_firstN.getValue();
 
+  // ------------------------------------------------------------------------
+  // DETERMINE POINT CLOUD REGISTRATION RESULTS
+  // ------------------------------------------------------------------------
+  // Store the pose estimates in (roll,pitch,yaw,x,y,z,registrationScore)
+  // format.
+  std::vector<std::vector<double>> poseEstimates(nDatasetEntriesToRun,
+                                                 std::vector<double>(7));
+
   std::vector<mrpt::Clock::time_point> obsTimes;
 
   std::cout << "\n"; // Needed for the VT100 codes below.
+
+  // Start the timer.
+  auto startReg = std::chrono::high_resolution_clock::now();
 
   // Run:
   for (size_t i = 0; i < nDatasetEntriesToRun; i++) {
@@ -489,35 +424,11 @@ static int main_odometry() {
       continue;
 
     // mrpt -> Eigen pointcloud
-    std::vector<Eigen::Vector3d> inputPts;
-    std::vector<double> inputPtTimestamps;
-
-    const mrpt::aligned_std_vector<float> *obs_Ts = nullptr;
+    mrpt::maps::CSimplePointsMap inputPts;
+    // std::vector<double> inputPtTimestamps;
 
     auto lmbPcToPoints = [&](const mrpt::maps::CPointsMap &pc) {
-      const auto &xs = pc.getPointsBufferRef_x();
-      const auto &ys = pc.getPointsBufferRef_y();
-      const auto &zs = pc.getPointsBufferRef_z();
-      const size_t N = xs.size();
-
-      for (size_t j = 0; j < N; j++)
-        inputPts.emplace_back(xs[j], ys[j], zs[j]);
-
-      const auto *Ts = obs_Ts;
-      if (Ts && !Ts->empty()) {
-        ASSERT_(Ts->size() == N);
-
-        // KISS ICP assumes times in the range [0,1]:
-        const float t0 = *std::min_element(Ts->cbegin(), Ts->cend());
-        const float t1 = *std::max_element(Ts->cbegin(), Ts->cend());
-        ASSERT_(t1 > t0);
-        const float k = 1.0f / (t1 - t0);
-
-        for (size_t j = 0; j < N; j++)
-          inputPtTimestamps.emplace_back(((*Ts)[j] - t0) * k);
-      }
-
-      obsTimes.push_back(obs->timestamp);
+      inputPts.insertAnotherMap(&pc, mrpt::poses::CPose3D::Identity());
     };
 
     if (auto obsPc =
@@ -525,7 +436,6 @@ static int main_odometry() {
         obsPc) {
       obsPc->load();
       ASSERT_(obsPc->pointcloud);
-      obs_Ts = obsPc->pointcloud->getPointsBufferRef_timestamp();
     }
 
     {
@@ -537,10 +447,39 @@ static int main_odometry() {
     if (inputPts.empty())
       continue;
 
+#if 0
     if (inputPtTimestamps.empty())
       kissIcp.RegisterFrame(inputPts);
     else
       kissIcp.RegisterFrame(inputPts, inputPtTimestamps);
+#endif
+
+    // Step 1: Read the scan and subsample the scan at rNew.
+    newScan.readScan(inputPts);
+
+    // --------------------------------------------------------------------
+    // STEP 2: INPUT POINT CLOUD TO LOCAL MAP REGISTRATION
+    // --------------------------------------------------------------------
+    if (i > 0) {
+      scanToMapRegister.registerScan(newScan.ptCloud, subMap.pcForKdTree_);
+
+      // Save the results.
+      poseEstimates[i] = {
+          scanToMapRegister.regResult(0),     scanToMapRegister.regResult(1),
+          scanToMapRegister.regResult(2),     scanToMapRegister.regResult(3),
+          scanToMapRegister.regResult(4),     scanToMapRegister.regResult(5),
+          scanToMapRegister.registrationScore};
+    }
+
+    // --------------------------------------------------------------------
+    // STEP 3: UPDATE THE LOCAL MAP
+    // --------------------------------------------------------------------
+    // Transform the current scan to the current pose estimate.
+    Eigen::Matrix4d hypothesis = homogeneous(
+        poseEstimates[i][0], poseEstimates[i][1], poseEstimates[i][2],
+        poseEstimates[i][3], poseEstimates[i][4], poseEstimates[i][5]);
+
+    subMap.updateMap(newScan.ptCloud, hypothesis);
 
     static int cnt = 0;
     if (cnt++ % 20 == 0) {
@@ -561,13 +500,29 @@ static int main_odometry() {
 
       std::cout.flush();
     }
-  }
+  } // end for each scan "i"
 
+  // Calculate the average time per registration result.
+  auto stopReg = std::chrono::high_resolution_clock::now();
+  auto durationReg =
+      std::chrono::duration_cast<std::chrono::milliseconds>(stopReg - startReg);
+  double avgTimePerScan = durationReg.count() / nDatasetEntriesToRun;
+
+  // ------------------------------------------------------------------------
+  // OUTPUT RESULTS
+  // ------------------------------------------------------------------------
+  if (config.verbose)
+    std::cout << "avgTimePerScan [ms] = " << avgTimePerScan << ";" << std::endl;
+
+  // Output a file with the results in the KITTI format, and a file with the
+  // configuration parameters.
+  writeResults(config, poseEstimates, config.outputFileName, avgTimePerScan);
+
+#if 0
   if (arg_outPath.isSet()) {
     std::cout << "\nSaving estimated path in TUM format to: "
               << arg_outPath.getValue() << std::endl;
 
-    const auto path = kissIcp.poses();
     mrpt::poses::CPose3DInterpolator lastEstimatedTrajectory;
     for (size_t i = 0; i < path.size(); i++) {
       mrpt::poses::CPose3D pose =
@@ -577,6 +532,7 @@ static int main_odometry() {
 
     lastEstimatedTrajectory.saveToTextFile_TUM(arg_outPath.getValue());
   }
+#endif
 
   return 0;
 }
