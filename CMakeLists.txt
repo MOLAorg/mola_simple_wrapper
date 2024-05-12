@@ -91,10 +91,14 @@ endif()
 # Find the required packages.
 find_package(nanoflann REQUIRED)
 find_package(TBB REQUIRED)
+
+# For some reason, we must use the direct include instead of find_package() for dlib or the target is not defined (JLBC) (!!??)
 #find_package(dlib CONFIG REQUIRED)
+include("${EMBEDDED_dlib_DIR}/dlib.cmake")
+
 find_package(Threads REQUIRED)
 find_package(yaml-cpp REQUIRED)
- 
+
 # Add an executable called simple.
 # simple MOLA CLI interface:
 mola_add_executable(
@@ -117,6 +121,7 @@ mola_add_executable(
 		#yaml-cpp::yaml-cpp
 )
 target_include_directories(mola-lidar-odometry-cli-simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/src)
+
 
 # MOLA dataset input modules:
 if (mola_input_kitti_dataset_FOUND)

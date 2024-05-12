@@ -47,8 +47,6 @@
 #include <mrpt/system/os.h>
 #include <mrpt/system/progress.h>
 
-#include <kiss_icp/pipeline/KissICP.hpp>
-
 #if defined(HAVE_MOLA_INPUT_KITTI)
 #include <mola_input_kitti_dataset/KittiOdometryDataset.h>
 #endif
@@ -76,6 +74,13 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+
+// Simple:
+#include "ConfigParser.hpp"
+#include "Map.hpp"
+#include "Register.hpp"
+#include "Scan.hpp"
+#include "utils.hpp"
 
 // Declare supported cli switches ===========
 static TCLAP::CmdLine cmd("mola-lidar-odometry-cli-kiss");
@@ -316,16 +321,100 @@ std::shared_ptr<mola::OfflineDatasetSource> dataset_from_paris_luco() {
 #endif
 
 static int main_odometry() {
-  kiss_icp::pipeline::KISSConfig kissCfg;
-  kissCfg.voxel_size = 1.0;
-  kissCfg.deskew = true;
 
-  if (argMinRange.isSet())
-    kissCfg.min_range = argMinRange.getValue();
-  if (argMaxRange.isSet())
-    kissCfg.max_range = argMaxRange.getValue();
+  // ------------------------------------------------------------------------
+  // ARGUMENT PARSING
+  // ------------------------------------------------------------------------
+  ConfigParser config(argc, argv);
+  int configStatus = config.parseConfig();
+  if (configStatus)
+    exit(1);
 
-  kiss_icp::pipeline::KissICP kissIcp(kissCfg);
+  // ------------------------------------------------------------------------
+  // LOAD THE SCAN PATHS
+  // ------------------------------------------------------------------------
+  std::vector<std::string> scanFiles;
+  for (auto const &dir_entry :
+       std::filesystem::directory_iterator(config.scanPath))
+    scanFiles.push_back(dir_entry.path());
+
+  // Sort the scans in order of the file name.
+  std::sort(scanFiles.begin(), scanFiles.end(), compareStrings);
+
+  // Number of scans.
+  unsigned int numScans = scanFiles.size();
+
+  // ------------------------------------------------------------------------
+  // DETERMINE POINT CLOUD REGISTRATION RESULTS
+  // ------------------------------------------------------------------------
+  // Store the pose estimates in (roll,pitch,yaw,x,y,z,registrationScore)
+  // format.
+  std::vector<std::vector<double>> poseEstimates(numScans,
+                                                 std::vector<double>(7));
+
+  // Start the timer.
+  auto startReg = std::chrono::high_resolution_clock::now();
+
+  // Container for a new scan.
+  Scan newScan(config);
+  Map subMap(config);
+  Register scanToMapRegister(config);
+
+  // Loop over all input scans, update the submap, and save the registration
+  // result.
+  for (unsigned int scanNum = 0; scanNum < numScans; scanNum++) {
+    // Step 1: Read the scan and subsample the scan at rNew.
+    newScan.readScan(scanFiles[scanNum]);
+
+    // --------------------------------------------------------------------
+    // STEP 2: INPUT POINT CLOUD TO LOCAL MAP REGISTRATION
+    // --------------------------------------------------------------------
+    if (scanNum > 0) {
+      scanToMapRegister.registerScan(newScan.ptCloud, subMap.pcForKdTree_);
+
+      // Save the results.
+      poseEstimates[scanNum] = {
+          scanToMapRegister.regResult(0),     scanToMapRegister.regResult(1),
+          scanToMapRegister.regResult(2),     scanToMapRegister.regResult(3),
+          scanToMapRegister.regResult(4),     scanToMapRegister.regResult(5),
+          scanToMapRegister.registrationScore};
+    }
+
+    // --------------------------------------------------------------------
+    // STEP 3: UPDATE THE LOCAL MAP
+    // --------------------------------------------------------------------
+    // Transform the current scan to the current pose estimate.
+    Eigen::Matrix4d hypothesis =
+        homogeneous(poseEstimates[scanNum][0], poseEstimates[scanNum][1],
+                    poseEstimates[scanNum][2], poseEstimates[scanNum][3],
+                    poseEstimates[scanNum][4], poseEstimates[scanNum][5]);
+
+    subMap.updateMap(newScan.ptCloud, hypothesis);
+
+    // Print the progress to the terminal.
+    // Comment printProgress to remove this.
+    printProgress((double(scanNum) / numScans));
+  }
+  // End with a new line character for the progress bar.
+  printf("\n");
+
+  // Calculate the average time per registration result.
+  auto stopReg = std::chrono::high_resolution_clock::now();
+  auto durationReg =
+      std::chrono::duration_cast<std::chrono::milliseconds>(stopReg - startReg);
+  double avgTimePerScan = durationReg.count() / numScans;
+
+  // ------------------------------------------------------------------------
+  // OUTPUT RESULTS
+  // ------------------------------------------------------------------------
+  if (config.verbose)
+    std::cout << "avgTimePerScan [ms] = " << avgTimePerScan << ";" << std::endl;
+
+  // Output a file with the results in the KITTI format, and a file with the
+  // configuration parameters.
+  writeResults(config, poseEstimates, config.outputFileName, avgTimePerScan);
+
+  // ----
 
   // Select dataset input:
   std::shared_ptr<mola::OfflineDatasetSource> dataset;
@@ -419,7 +508,6 @@ static int main_odometry() {
         ASSERT_(Ts->size() == N);
 
         // KISS ICP assumes times in the range [0,1]:
-
         const float t0 = *std::min_element(Ts->cbegin(), Ts->cend());
         const float t1 = *std::max_element(Ts->cbegin(), Ts->cend());
         ASSERT_(t1 > t0);
