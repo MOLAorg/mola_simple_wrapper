@@ -85,7 +85,7 @@
 // Declare supported cli switches ===========
 static TCLAP::CmdLine cmd("mola-lidar-odometry-cli-kiss");
 
-static TCLAP::ValueArg<std::string> argSimpleConfigYaml("-c", "config-file",
+static TCLAP::ValueArg<std::string> argSimpleConfigYaml("c", "config-file",
                                                         "Simple config file",
                                                         true, "config.yaml",
                                                         "config.yaml", cmd);
@@ -391,15 +391,14 @@ static int main_odometry() {
   // ------------------------------------------------------------------------
   // Store the pose estimates in (roll,pitch,yaw,x,y,z,registrationScore)
   // format.
-  std::vector<std::vector<double>> poseEstimates(nDatasetEntriesToRun,
-                                                 std::vector<double>(7));
-
   std::vector<mrpt::Clock::time_point> obsTimes;
 
   std::cout << "\n"; // Needed for the VT100 codes below.
 
   // Start the timer.
   auto startReg = std::chrono::high_resolution_clock::now();
+
+  mrpt::poses::CPose3DInterpolator estimatedTrajectory;
 
   // Run:
   for (size_t i = 0; i < nDatasetEntriesToRun; i++) {
@@ -460,11 +459,13 @@ static int main_odometry() {
     // --------------------------------------------------------------------
     // STEP 2: INPUT POINT CLOUD TO LOCAL MAP REGISTRATION
     // --------------------------------------------------------------------
+    auto poseEstimate = std::vector<double>(7);
+
     if (i > 0) {
       scanToMapRegister.registerScan(newScan.ptCloud, subMap.pcForKdTree_);
 
       // Save the results.
-      poseEstimates[i] = {
+      poseEstimate = {
           scanToMapRegister.regResult(0),     scanToMapRegister.regResult(1),
           scanToMapRegister.regResult(2),     scanToMapRegister.regResult(3),
           scanToMapRegister.regResult(4),     scanToMapRegister.regResult(5),
@@ -475,12 +476,22 @@ static int main_odometry() {
     // STEP 3: UPDATE THE LOCAL MAP
     // --------------------------------------------------------------------
     // Transform the current scan to the current pose estimate.
-    Eigen::Matrix4d hypothesis = homogeneous(
-        poseEstimates[i][0], poseEstimates[i][1], poseEstimates[i][2],
-        poseEstimates[i][3], poseEstimates[i][4], poseEstimates[i][5]);
+    // roll, pitch, yaw, x,y,z
+    //  0     1     2    3 4 5
+    Eigen::Matrix4d hypothesis =
+        homogeneous(poseEstimate[0], poseEstimate[1], poseEstimate[2],
+                    poseEstimate[3], poseEstimate[4], poseEstimate[5]);
 
     subMap.updateMap(newScan.ptCloud, hypothesis);
 
+    const auto pose = mrpt::poses::CPose3D::FromXYZYawPitchRoll(
+        poseEstimate[3], poseEstimate[4], poseEstimate[5], poseEstimate[2],
+        poseEstimate[1], poseEstimate[0]);
+
+    // add to trajectory:
+    estimatedTrajectory.insert(obs->timestamp, pose);
+
+    // print progress:
     static int cnt = 0;
     if (cnt++ % 20 == 0) {
       cnt = 0;
@@ -511,28 +522,20 @@ static int main_odometry() {
   // ------------------------------------------------------------------------
   // OUTPUT RESULTS
   // ------------------------------------------------------------------------
-  if (config.verbose)
-    std::cout << "avgTimePerScan [ms] = " << avgTimePerScan << ";" << std::endl;
+  // if (config.verbose)
+  std::cout << "avgTimePerScan [ms] = " << avgTimePerScan << ";" << std::endl;
 
   // Output a file with the results in the KITTI format, and a file with the
   // configuration parameters.
-  writeResults(config, poseEstimates, config.outputFileName, avgTimePerScan);
+  // writeResults(config, poseEstimates, config.outputFileName,
+  // avgTimePerScan);
 
-#if 0
   if (arg_outPath.isSet()) {
     std::cout << "\nSaving estimated path in TUM format to: "
               << arg_outPath.getValue() << std::endl;
 
-    mrpt::poses::CPose3DInterpolator lastEstimatedTrajectory;
-    for (size_t i = 0; i < path.size(); i++) {
-      mrpt::poses::CPose3D pose =
-          mrpt::poses::CPose3D::FromHomogeneousMatrix(path[i].matrix());
-      lastEstimatedTrajectory.insert(obsTimes[i], pose);
-    }
-
-    lastEstimatedTrajectory.saveToTextFile_TUM(arg_outPath.getValue());
+    estimatedTrajectory.saveToTextFile_TUM(arg_outPath.getValue());
   }
-#endif
 
   return 0;
 }
