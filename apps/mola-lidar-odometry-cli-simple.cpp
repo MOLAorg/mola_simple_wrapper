@@ -83,7 +83,7 @@
 #include "utils.hpp"
 
 // Declare supported cli switches ===========
-static TCLAP::CmdLine cmd("mola-lidar-odometry-cli-kiss");
+static TCLAP::CmdLine cmd("mola-lidar-odometry-cli-simple");
 
 static TCLAP::ValueArg<std::string> argSimpleConfigYaml("c", "config-file",
                                                         "Simple config file",
