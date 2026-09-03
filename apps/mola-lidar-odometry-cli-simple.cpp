@@ -28,7 +28,6 @@
 #include <mola_kernel/interfaces/OfflineDatasetSource.h>
 #include <mola_kernel/pretty_print_exception.h>
 #include <mola_yaml/yaml_helpers.h>
-#include <mrpt/3rdparty/tclap/CmdLine.h>
 #include <mrpt/core/Clock.h>
 #include <mrpt/core/exceptions.h>
 #include <mrpt/io/lazy_load_path.h>
@@ -46,6 +45,8 @@
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>
 #include <mrpt/system/progress.h>
+
+#include <CLI/CLI.hpp>
 
 #if defined(HAVE_MOLA_INPUT_KITTI)
 #include <mola_input_kitti_dataset/KittiOdometryDataset.h>
@@ -83,79 +84,50 @@
 #include "utils.hpp"
 
 // Declare supported cli switches ===========
-static TCLAP::CmdLine cmd("mola-lidar-odometry-cli-simple");
+static CLI::App cmd{"mola-lidar-odometry-cli-simple"};
 
-static TCLAP::ValueArg<std::string> argSimpleConfigYaml("c", "config-file",
-                                                        "Simple config file",
-                                                        true, "config.yaml",
-                                                        "config.yaml", cmd);
+static std::string argSimpleConfigYaml{"config.yaml"};
 
-static TCLAP::ValueArg<std::string> arg_outPath(
-    "", "output-tum-path",
-    "Save the estimated path as a TXT file using the TUM file format (see evo "
-    "docs)",
-    false, "output-trajectory.txt", "output-trajectory.txt", cmd);
+static std::string arg_outPath{"output-trajectory.txt"};
+static bool arg_outPath_set{false};
 
-static TCLAP::ValueArg<int>
-    arg_firstN("", "only-first-n",
-               "Run for the first N steps only (0=default, not used)", false, 0,
-               "Number of dataset entries to run", cmd);
-
-// Input dataset can come from one of these:
-// --------------------------------------------
+static int arg_firstN{0};
+static bool arg_firstN_set{false};
 
 // Input dataset can come from one of these:
 // --------------------------------------------
 #if defined(HAVE_MOLA_INPUT_RAWLOG)
-static TCLAP::ValueArg<std::string> argRawlog(
-    "", "input-rawlog",
-    "INPUT DATASET: rawlog. Input dataset in rawlog format (*.rawlog)", false,
-    "dataset.rawlog", "dataset.rawlog", cmd);
+static std::string argRawlog{"dataset.rawlog"};
+static bool argRawlog_set{false};
 #endif
 
 #if defined(HAVE_MOLA_INPUT_ROSBAG2)
-static TCLAP::ValueArg<std::string> argRosbag2(
-    "", "input-rosbag2",
-    "INPUT DATASET: rosbag2. Input dataset in rosbag2 format (*.mcap)", false,
-    "dataset.mcap", "dataset.mcap", cmd);
+static std::string argRosbag2{"dataset.mcap"};
+static bool argRosbag2_set{false};
 #endif
 
-static TCLAP::ValueArg<std::string> arg_lidarLabel(
-    "", "lidar-sensor-label",
-    "If provided, this supersedes the values in the 'lidar_sensor_labels' "
-    "entry of the odometry pipeline, defining the sensorLabel/topic name to "
-    "read LIDAR data from. It can be a regular expression (std::regex)",
-    false, "lidar1", "lidar1", cmd);
+static std::string arg_lidarLabel{"lidar1"};
+static bool arg_lidarLabel_set{false};
 
 #if defined(HAVE_MOLA_INPUT_KITTI)
-static TCLAP::ValueArg<std::string>
-    argKittiSeq("", "input-kitti-seq",
-                "INPUT DATASET: Use KITTI dataset sequence number 00|01|...",
-                false, "00", "00", cmd);
-static TCLAP::ValueArg<double>
-    argKittiAngleDeg("", "kitti-correction-angle-deg",
-                     "Correction vertical angle offset (see Deschaud,2018)",
-                     false, 0.205, "0.205 [degrees]", cmd);
+static std::string argKittiSeq{"00"};
+static bool argKittiSeq_set{false};
+static double argKittiAngleDeg{0.205};
+static bool argKittiAngleDeg_set{false};
 #endif
 
 #if defined(HAVE_MOLA_INPUT_KITTI360)
-static TCLAP::ValueArg<std::string> argKitti360Seq(
-    "", "input-kitti360-seq",
-    "INPUT DATASET: Use KITTI360 dataset sequence number 00|01|...", false,
-    "00", "00", cmd);
+static std::string argKitti360Seq{"00"};
+static bool argKitti360Seq_set{false};
 #endif
 
 #if defined(HAVE_MOLA_INPUT_MULRAN)
-static TCLAP::ValueArg<std::string> argMulranSeq(
-    "", "input-mulran-seq",
-    "INPUT DATASET: Use Mulran dataset sequence KAIST01|KAIST01|...", false,
-    "KAIST01", "KAIST01", cmd);
+static std::string argMulranSeq{"KAIST01"};
+static bool argMulranSeq_set{false};
 #endif
 
 #if defined(HAVE_MOLA_INPUT_PARIS_LUCO)
-static TCLAP::SwitchArg argParisLucoSeq(
-    "", "input-paris-luco",
-    "INPUT DATASET: Use Paris Luco dataset (unique sequence=00)", cmd);
+static bool argParisLucoSeq{false};
 #endif
 
 #if defined(HAVE_MOLA_INPUT_RAWLOG)
@@ -198,15 +170,15 @@ dataset_from_kitti(const std::string &kittiSeqNumber) {
 
   o->initialize(cfg);
 
-  if (argKittiAngleDeg.isSet())
-    o->VERTICAL_ANGLE_OFFSET = mrpt::DEG2RAD(argKittiAngleDeg.getValue());
+  if (argKittiAngleDeg_set)
+    o->VERTICAL_ANGLE_OFFSET = mrpt::DEG2RAD(argKittiAngleDeg);
 
   // Save GT, if available:
-  if (arg_outPath.isSet() && o->hasGroundTruthTrajectory()) {
+  if (arg_outPath_set && o->hasGroundTruthTrajectory()) {
     const auto &gtPath = o->getGroundTruthTrajectory();
 
     gtPath.saveToTextFile_TUM(
-        mrpt::system::fileNameChangeExtension(arg_outPath.getValue(), "") +
+        mrpt::system::fileNameChangeExtension(arg_outPath, "") +
         std::string("_gt.txt"));
   }
 
@@ -236,11 +208,11 @@ dataset_from_kitti360(const std::string &kittiSeqNumber) {
   o->initialize(cfg);
 
   // Save GT, if available:
-  if (arg_outPath.isSet() && o->hasGroundTruthTrajectory()) {
+  if (arg_outPath_set && o->hasGroundTruthTrajectory()) {
     const auto &gtPath = o->getGroundTruthTrajectory();
 
     gtPath.saveToTextFile_TUM(
-        mrpt::system::fileNameChangeExtension(arg_outPath.getValue(), "") +
+        mrpt::system::fileNameChangeExtension(arg_outPath, "") +
         std::string("_gt.txt"));
   }
 
@@ -252,7 +224,7 @@ dataset_from_kitti360(const std::string &kittiSeqNumber) {
 std::shared_ptr<mola::OfflineDatasetSource>
 dataset_from_rosbag2(const std::string &rosbag2file) {
   ASSERTMSG_(
-      arg_lidarLabel.isSet(),
+      arg_lidarLabel_set,
       "Using a rosbag2 as input requires telling what is the lidar topic "
       "with --lidar-sensor-label <TOPIC_NAME>");
 
@@ -269,7 +241,7 @@ dataset_from_rosbag2(const std::string &rosbag2file) {
           # If present, this will override whatever /tf tells about the sensor pose:
           fixed_sensor_pose: "0 0 0 0 0 0"  # 'x y z yaw_deg pitch_deg roll_deg'
 )"""",
-      rosbag2file.c_str(), arg_lidarLabel.getValue().c_str())));
+      rosbag2file.c_str(), arg_lidarLabel.c_str())));
 
   o->initialize(cfg);
 
@@ -322,7 +294,7 @@ static int main_odometry() {
   // ------------------------------------------------------------------------
   // ARGUMENT PARSING
   // ------------------------------------------------------------------------
-  const char *argv[3] = {"me", argSimpleConfigYaml.getValue().c_str(), nullptr};
+  const char *argv[3] = {"me", argSimpleConfigYaml.c_str(), nullptr};
   ConfigParser config(2 /*argc*/, argv);
   int configStatus = config.parseConfig();
   if (configStatus)
@@ -344,32 +316,32 @@ static int main_odometry() {
   std::shared_ptr<mola::OfflineDatasetSource> dataset;
 
 #if defined(HAVE_MOLA_INPUT_RAWLOG)
-  if (argRawlog.isSet()) {
-    dataset = dataset_from_rawlog(argRawlog.getValue());
+  if (argRawlog_set) {
+    dataset = dataset_from_rawlog(argRawlog);
   } else
 #endif
 #if defined(HAVE_MOLA_INPUT_KITTI)
-      if (argKittiSeq.isSet()) {
-    dataset = dataset_from_kitti(argKittiSeq.getValue());
+      if (argKittiSeq_set) {
+    dataset = dataset_from_kitti(argKittiSeq);
   } else
 #endif
 #if defined(HAVE_MOLA_INPUT_KITTI360)
-      if (argKitti360Seq.isSet()) {
-    dataset = dataset_from_kitti360(argKitti360Seq.getValue());
+      if (argKitti360Seq_set) {
+    dataset = dataset_from_kitti360(argKitti360Seq);
   } else
 #endif
 #if defined(HAVE_MOLA_INPUT_MULRAN)
-      if (argMulranSeq.isSet()) {
-    dataset = dataset_from_mulran(argMulranSeq.getValue());
+      if (argMulranSeq_set) {
+    dataset = dataset_from_mulran(argMulranSeq);
   } else
 #endif
 #if defined(HAVE_MOLA_INPUT_ROSBAG2)
-      if (argRosbag2.isSet()) {
-    dataset = dataset_from_rosbag2(argRosbag2.getValue());
+      if (argRosbag2_set) {
+    dataset = dataset_from_rosbag2(argRosbag2);
   } else
 #endif
 #if defined(HAVE_MOLA_INPUT_PARIS_LUCO)
-      if (argParisLucoSeq.isSet()) {
+      if (argParisLucoSeq) {
     dataset = dataset_from_paris_luco();
   } else
 #endif
@@ -383,8 +355,8 @@ static int main_odometry() {
   const double tStart = mrpt::Clock::nowDouble();
 
   size_t nDatasetEntriesToRun = dataset->datasetSize();
-  if (arg_firstN.isSet())
-    nDatasetEntriesToRun = arg_firstN.getValue();
+  if (arg_firstN_set)
+    nDatasetEntriesToRun = arg_firstN;
 
   // ------------------------------------------------------------------------
   // DETERMINE POINT CLOUD REGISTRATION RESULTS
@@ -530,11 +502,11 @@ static int main_odometry() {
   // writeResults(config, poseEstimates, config.outputFileName,
   // avgTimePerScan);
 
-  if (arg_outPath.isSet()) {
-    std::cout << "\nSaving estimated path in TUM format to: "
-              << arg_outPath.getValue() << std::endl;
+  if (arg_outPath_set) {
+    std::cout << "\nSaving estimated path in TUM format to: " << arg_outPath
+              << std::endl;
 
-    estimatedTrajectory.saveToTextFile_TUM(arg_outPath.getValue());
+    estimatedTrajectory.saveToTextFile_TUM(arg_outPath);
   }
 
   return 0;
@@ -542,9 +514,85 @@ static int main_odometry() {
 
 int main(int argc, char **argv) {
   try {
-    // Parse arguments:
-    if (!cmd.parse(argc, argv))
-      return 1; // should exit.
+    cmd.add_option("-c,--config-file", argSimpleConfigYaml,
+                   "Simple config file")
+        ->required();
+
+    auto *optOutPath = cmd.add_option("--output-tum-path", arg_outPath,
+                                      "Save the estimated path as a TXT file "
+                                      "using the TUM file format (see evo "
+                                      "docs)");
+
+    auto *optFirstN =
+        cmd.add_option("--only-first-n", arg_firstN,
+                       "Run for the first N steps only (0=default, not used)");
+
+#if defined(HAVE_MOLA_INPUT_RAWLOG)
+    auto *optRawlog = cmd.add_option(
+        "--input-rawlog", argRawlog,
+        "INPUT DATASET: rawlog. Input dataset in rawlog format (*.rawlog)");
+#endif
+
+#if defined(HAVE_MOLA_INPUT_ROSBAG2)
+    auto *optRosbag2 = cmd.add_option(
+        "--input-rosbag2", argRosbag2,
+        "INPUT DATASET: rosbag2. Input dataset in rosbag2 format (*.mcap)");
+#endif
+
+    auto *optLidarLabel = cmd.add_option(
+        "--lidar-sensor-label", arg_lidarLabel,
+        "If provided, this supersedes the values in the 'lidar_sensor_labels' "
+        "entry of the odometry pipeline, defining the sensorLabel/topic name "
+        "to "
+        "read LIDAR data from. It can be a regular expression (std::regex)");
+
+#if defined(HAVE_MOLA_INPUT_KITTI)
+    auto *optKittiSeq = cmd.add_option(
+        "--input-kitti-seq", argKittiSeq,
+        "INPUT DATASET: Use KITTI dataset sequence number 00|01|...");
+    auto *optKittiAngleDeg =
+        cmd.add_option("--kitti-correction-angle-deg", argKittiAngleDeg,
+                       "Correction vertical angle offset (see Deschaud,2018)");
+#endif
+
+#if defined(HAVE_MOLA_INPUT_KITTI360)
+    auto *optKitti360Seq = cmd.add_option(
+        "--input-kitti360-seq", argKitti360Seq,
+        "INPUT DATASET: Use KITTI360 dataset sequence number 00|01|...");
+#endif
+
+#if defined(HAVE_MOLA_INPUT_MULRAN)
+    auto *optMulranSeq = cmd.add_option(
+        "--input-mulran-seq", argMulranSeq,
+        "INPUT DATASET: Use Mulran dataset sequence KAIST01|KAIST01|...");
+#endif
+
+#if defined(HAVE_MOLA_INPUT_PARIS_LUCO)
+    cmd.add_flag("--input-paris-luco", argParisLucoSeq,
+                 "INPUT DATASET: Use Paris Luco dataset (unique sequence=00)");
+#endif
+
+    CLI11_PARSE(cmd, argc, argv);
+
+    arg_outPath_set = (optOutPath->count() > 0);
+    arg_firstN_set = (optFirstN->count() > 0);
+#if defined(HAVE_MOLA_INPUT_RAWLOG)
+    argRawlog_set = (optRawlog->count() > 0);
+#endif
+#if defined(HAVE_MOLA_INPUT_ROSBAG2)
+    argRosbag2_set = (optRosbag2->count() > 0);
+#endif
+    arg_lidarLabel_set = (optLidarLabel->count() > 0);
+#if defined(HAVE_MOLA_INPUT_KITTI)
+    argKittiSeq_set = (optKittiSeq->count() > 0);
+    argKittiAngleDeg_set = (optKittiAngleDeg->count() > 0);
+#endif
+#if defined(HAVE_MOLA_INPUT_KITTI360)
+    argKitti360Seq_set = (optKitti360Seq->count() > 0);
+#endif
+#if defined(HAVE_MOLA_INPUT_MULRAN)
+    argMulranSeq_set = (optMulranSeq->count() > 0);
+#endif
 
     main_odometry();
 
