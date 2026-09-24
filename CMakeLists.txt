@@ -1,5 +1,5 @@
 # Minimum CMake vesion: limited by CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS
-cmake_minimum_required(VERSION 3.4)
+cmake_minimum_required(VERSION 3.5)
 
 if("$ENV{ROS_VERSION}" STREQUAL "2")
 	set(DETECTED_ROS2 TRUE)
@@ -12,8 +12,8 @@ project(mola_simple_wrapper LANGUAGES CXX)
 find_package(mola_common REQUIRED)
 
 # find dependencies:
-find_package(mrpt-maps REQUIRED)
-find_package(mrpt-tclap REQUIRED)
+find_package(mrpt_maps REQUIRED)
+find_package(CLI11 REQUIRED)
 find_mola_package(mola_kernel)
 
 # CLI apps
@@ -44,6 +44,10 @@ if (TRUE)
 		-DDLIB_NO_GUI_SUPPORT=ON
 		-DCMAKE_POSITION_INDEPENDENT_CODE=ON
 		-DCMAKE_INSTALL_PREFIX=${EMBEDDED_dlib_INSTALL_DIR}
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5
+		# dlib 19.24 relies on <cstdint> being transitively included by other
+		# standard headers, which newer libstdc++ no longer does:
+		-DCMAKE_CXX_FLAGS=-include\ cstdint
 	RESULT_VARIABLE result
 	WORKING_DIRECTORY "${EMBEDDED_dlib_BUILD_DIR}"
 	${echo_flag}
@@ -71,6 +75,7 @@ if (TRUE)
 	execute_process(COMMAND
 		${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" "${EMBEDDED_dlib_SOURCE_DIR}"
 		-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+		-DCMAKE_POLICY_VERSION_MINIMUM=3.5
 	RESULT_VARIABLE result
 	WORKING_DIRECTORY "${EMBEDDED_dlib_BUILD_DIR}"
 	${echo_flag}
@@ -112,8 +117,8 @@ mola_add_executable(
 		${CMAKE_CURRENT_SOURCE_DIR}/upstream/src/Register.cpp
 		${CMAKE_CURRENT_SOURCE_DIR}/upstream/src/utils.cpp
 	LINK_LIBRARIES
-		mrpt::maps
-		mrpt::tclap
+		mrpt::mrpt_maps
+		CLI11::CLI11
 		mola::mola_kernel
 		nanoflann::nanoflann
 		dlib::dlib
@@ -121,6 +126,9 @@ mola_add_executable(
 		${YAML_CPP_LIBRARIES}
 )
 target_include_directories(mola-lidar-odometry-cli-simple PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/src)
+# dlib 19.24's installed headers rely on <cstdint> being transitively
+# included by other standard headers, which newer libstdc++ no longer does:
+target_compile_options(mola-lidar-odometry-cli-simple PRIVATE -include cstdint)
 
 
 # MOLA dataset input modules:
